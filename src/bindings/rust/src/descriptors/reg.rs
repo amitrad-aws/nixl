@@ -120,7 +120,7 @@ impl<'a> RegDescList<'a> {
         dev_id: u64,
         metadata: &[u8],
     ) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.push(RegDescriptor {
                 addr,
                 len,
@@ -144,7 +144,7 @@ impl<'a> RegDescList<'a> {
 
     /// Trims the list to the given size
     pub fn trim(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.shrink_to_fit();
         });
         Ok(())
@@ -155,7 +155,7 @@ impl<'a> RegDescList<'a> {
         if index < 0 { return Err(NixlError::InvalidParam); }
         let idx = index as usize;
 
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             if idx >= data.descriptors.len() { return Err(NixlError::InvalidParam); }
             data.descriptors.remove(idx);
             Ok(())
@@ -176,7 +176,7 @@ impl<'a> RegDescList<'a> {
 
     /// Clears all descriptors from the list
     pub fn clear(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.clear();
         });
         Ok(())
@@ -184,7 +184,7 @@ impl<'a> RegDescList<'a> {
 
     /// Resizes the list to the given size
     pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.resize(new_size, RegDescriptor {
                 addr: 0,
                 len: 0,

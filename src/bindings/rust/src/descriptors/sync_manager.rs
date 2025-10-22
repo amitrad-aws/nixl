@@ -30,7 +30,7 @@ impl<T: BackendSyncable> SyncManager<T> {
     }
 
     /// Mutates the frontend data (marks as dirty)
-    pub fn mutate<F, R>(&mut self, f: F) -> R
+    pub fn modify<F, R>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {

@@ -103,7 +103,7 @@ impl<'a> XferDescList<'a> {
 
     /// Adds a descriptor to the list
     pub fn add_desc(&mut self, addr: usize, len: usize, dev_id: u64) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.push(XferDescriptor { addr, len, dev_id });
         });
         Ok(())
@@ -122,7 +122,7 @@ impl<'a> XferDescList<'a> {
 
     /// Trims the list to the given size
     pub fn trim(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.shrink_to_fit();
         });
         Ok(())
@@ -133,7 +133,7 @@ impl<'a> XferDescList<'a> {
         if index < 0 { return Err(NixlError::InvalidParam); }
         let idx = index as usize;
 
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             if idx >= data.descriptors.len() { return Err(NixlError::InvalidParam); }
             data.descriptors.remove(idx);
             Ok(())
@@ -142,7 +142,7 @@ impl<'a> XferDescList<'a> {
 
     /// Clears all descriptors from the list
     pub fn clear(&mut self) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.clear();
         });
         Ok(())
@@ -162,7 +162,7 @@ impl<'a> XferDescList<'a> {
 
     /// Resizes the list to the given size
     pub fn resize(&mut self, new_size: usize) -> Result<(), NixlError> {
-        self.sync_mgr.mutate(|data| {
+        self.sync_mgr.modify(|data| {
             data.descriptors.resize(new_size, XferDescriptor {
                 addr: 0,
                 len: 0,

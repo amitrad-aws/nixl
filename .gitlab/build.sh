@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Simplified build script for CI using nixl-deps-base image
+# Dependencies (UCX, libfabric, etcd, aws-sdk, rust, DOCA) are pre-installed in the base image
+
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
@@ -21,29 +24,17 @@ set -e
 set -x
 set -o pipefail
 
-# Parse commandline arguments with first argument being the install directory
-# and second argument being the UCX installation directory.
+# Parse commandline arguments
 INSTALL_DIR=$1
-UCX_INSTALL_DIR=$2
-EXTRA_BUILD_ARGS=${3:-""}
-# UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.19.0}
-# LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
-LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.3.0}
-# LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
-LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+EXTRA_BUILD_ARGS=${2:-""}
+LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-/usr/local}
 
 if [ -z "$INSTALL_DIR" ]; then
-    echo "Usage: $0 <install_dir> <ucx_install_dir>"
+    echo "Usage: $0 <install_dir> [extra_build_args]"
     exit 1
 fi
 
-if [ -z "$UCX_INSTALL_DIR" ]; then
-    UCX_INSTALL_DIR=$INSTALL_DIR
-fi
-
-
-# For running as user - check if running as root, if not set sudo variable
+# For running as user - check if running as root
 if [ "$(id -u)" -ne 0 ]; then
     SUDO=sudo
 else
@@ -53,168 +44,7 @@ fi
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
-# Some docker images are with broken installations:
-$SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
-
-$SUDO apt-get -qq update
-$SUDO apt-get -qq install -y python3-dev \
-                             python3-pip \
-                             curl \
-                             wget \
-                             libnuma-dev \
-                             numactl \
-                             autotools-dev \
-                             automake \
-                             git \
-                             libtool \
-                             libz-dev \
-                             libiberty-dev \
-                             flex \
-                             build-essential \
-                             cmake \
-                             libgoogle-glog-dev \
-                             libgtest-dev \
-                             libgmock-dev \
-                             libjsoncpp-dev \
-                             libpython3-dev \
-                             libboost-all-dev \
-                             libssl-dev \
-                             libgrpc-dev \
-                             libgrpc++-dev \
-                             libprotobuf-dev \
-                             libcpprest-dev \
-                             libaio-dev \
-                             liburing-dev \
-                             meson \
-                             ninja-build \
-                             pkg-config \
-                             protobuf-compiler-grpc \
-                             pybind11-dev \
-                             etcd-server \
-                             net-tools \
-                             iproute2 \
-                             pciutils \
-                             libpci-dev \
-                             uuid-dev \
-                             libibmad-dev \
-                             doxygen \
-                             clang \
-                             hwloc \
-                             libhwloc-dev \
-                             libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
-
-# Ubuntu 22.04 specific setup
-if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
-    # Upgrade pip for '--break-system-packages' support
-    $SUDO pip3 install --upgrade pip
-
-    # Upgrade meson (distro version 0.61.2 is too old, project requires >= 0.64.0)
-    $SUDO pip3 install --upgrade meson
-    # Ensure pip3's meson takes precedence over apt's version
-    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-fi
-
-# Add DOCA repository and install packages
-ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
-MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb
-$SUDO dpkg -i doca-host.deb
-$SUDO apt-get update
-$SUDO apt-get upgrade -y
-$SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
-
-# Force reinstall of RDMA packages from DOCA repository
-# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
-# Upgrade is not sufficient if the version is the same since apt skips the installation.
-$SUDO apt-get -qq -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
-
-wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init
-chmod +x rustup-init
-./rustup-init -y --default-toolchain 1.86.0
-export PATH="$HOME/.cargo/bin:$PATH"
-
-wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh
-chmod +x install_uv.sh
-./install_uv.sh
-export PATH="$HOME/.local/bin:$PATH"
-
-curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz
-( \
-  cd openucx-ucx* && \
-  ./autogen.sh && \
-  ./configure \
-          --prefix="${UCX_INSTALL_DIR}" \
-          --enable-shared \
-          --disable-static \
-          --disable-doxygen-doc \
-          --enable-optimizations \
-          --enable-cma \
-          --enable-devel-headers \
-          --with-verbs \
-          --with-dm \
-          ${UCX_CUDA_BUILD_ARGS} \
-          --enable-mt && \
-        make -j && \
-        make -j install-strip && \
-        $SUDO ldconfig \
-)
-
-wget --tries=3 --waitretry=5 -O "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-tar xjf "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-rm "libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-( \
-  cd libfabric-* && \
-  ./autogen.sh && \
-  ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
-              --disable-verbs \
-              --disable-psm3 \
-              --disable-opx \
-              --disable-usnic \
-              --disable-rstream \
-              --enable-efa && \
-  make -j && \
-  make install && \
-  $SUDO ldconfig \
-)
-
-( \
-  cd /tmp && \
-  git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
-  cd etcd-cpp-apiv3 && \
-  mkdir build && cd build && \
-  cmake .. && \
-  make -j"$NPROC" && \
-  $SUDO make install && \
-  $SUDO ldconfig \
-)
-
-( \
-  cd /tmp && \
-  git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
-  mkdir aws_sdk_build && \
-  cd aws_sdk_build && \
-  cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-  make -j"$NPROC" && \
-  $SUDO make install
-)
-
-( \
-  cd /tmp && \
-  git clone https://github.com/nvidia/gusli.git && \
-  cd gusli && \
-  $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-  $SUDO ldconfig
-)
-
-( \
-  cd /tmp &&
-  git clone --depth 1 https://github.com/google/gtest-parallel.git &&
-  mkdir -p ${INSTALL_DIR}/bin &&
-  cp gtest-parallel/* ${INSTALL_DIR}/bin/
-)
-
+# Set library and binary paths
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$PATH"
@@ -222,18 +52,13 @@ export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgcon
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
-# Disabling CUDA IPC not to use NVLINK, as it slows down local
-# UCX transfers and can cause contention with local collectives.
-export UCX_TLS=^cuda_ipc
-
+# Build NIXL
 # shellcheck disable=SC2086
-meson setup nixl_build --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+meson setup nixl_build --prefix=${INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}"
+ninja -j"$NPROC" -C nixl_build && ninja -j"$NPROC" -C nixl_build install
 mkdir -p dist && cp nixl_build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-ninja -j${NPROC:-$(nproc)} -C nixl_build && ninja -j${NPROC:-$(nproc)} -C nixl_build install
 
-# TODO(kapila): Copy the nixl.pc file to the install directory if needed.
-# cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
-
+# Build nixlbench
 cd benchmark/nixlbench
 meson setup nixlbench_build -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
 ninja -j"$NPROC" -C nixlbench_build && ninja -j"$NPROC" -C nixlbench_build install
